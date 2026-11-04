@@ -8,7 +8,7 @@ const Product = require("../models/products");
 const Activity = require("../models/activities");
 const User = require("../models/users");
 const { requireAuth } = require("../middleware/auth");
-const { sendOrderEmail } = require("../mailer");
+
 
 // Créer une commande
 router.post("/", requireAuth, async (req, res) => {
@@ -42,9 +42,9 @@ router.post("/", requireAuth, async (req, res) => {
 
         const seller = await User.findById(activity.userId);
 
-        if (!seller || !seller.email || !seller.profiles.includes("propose")) {
+       if (!seller || !seller.profiles.includes("propose")) {
             return res.status(404).json({
-                message: "Prestataire introuvable ou adresse e-mail indisponible.",
+                message: "Prestataire introuvable ou profil marchand indisponible.",
             });
         }
 
@@ -120,42 +120,7 @@ router.post("/", requireAuth, async (req, res) => {
             totalsByCurrency,
         });
 
-        try {
-            const emailProducts = orderProducts
-                .map(
-                    (product) =>
-                        `- ${product.name} : ${product.quantity} x ${product.price} ${product.currency}`
-                )
-                .join("\n");
 
-            const emailTotals = Object.entries(totalsByCurrency)
-                .map(([currency, total]) => `${total.toFixed(2)} ${currency}`)
-                .join("\n");
-
-            await sendOrderEmail({
-                to: seller.email,
-                subject: "Nouvelle commande reçue sur Zoma",
-                text: `Bonjour,
-
-Vous avez reçu une nouvelle commande sur Zoma.
-
-Activité : ${activity.name}
-Client : ${prospect.name || "Prospect"}
-E-mail du client : ${prospect.email}
-
-Produits commandés :
-${emailProducts}
-
-Total :
-${emailTotals}
-
-Connectez-vous à votre espace prestataire pour consulter cette commande.
-
-L'équipe Zoma`,
-            });
-        } catch (emailError) {
-            console.error("Erreur lors de l'envoi de l'e-mail au vendeur :", emailError);
-        }
 
         return res.status(201).json({
             message: "Commande enregistrée avec succès.",
@@ -165,7 +130,6 @@ L'équipe Zoma`,
                 activityName: activity.name,
                 prospectName: prospect.name,
                 prospectEmail: prospect.email,
-                sellerEmail: seller.email,
                 products: order.products,
                 totalsByCurrency: Object.fromEntries(order.totalsByCurrency),
                 createdAt: order.createdAt,
