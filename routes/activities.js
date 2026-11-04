@@ -28,97 +28,21 @@ function isStringArray(value) {
 }
 
 // Enregistrer une nouvelle activité
-router.post('/', async (req, res) => {
+// Créer une activité pour le commerçant connecté
+router.post('/', requireAuth, async (req, res) => {
   try {
     const {
-      userId,
-      name,
       specialty,
       countries,
-      frenchDepartments = [],
-      frenchCities = [],
-      madagascarCities = [],
-      parcelDirections = [],
-      delivery
+      frenchDepartments,
+      frenchCities,
+      madagascarCities,
+      parcelDirections,
+      deliveries
     } = req.body;
 
-    const checks = {
-      userIdString: typeof userId === 'string',
-      userIdValid: mongoose.Types.ObjectId.isValid(userId),
-      nameValid: typeof name === 'string' && !!name.trim(),
-      specialtyValid: typeof specialty === 'string' && !!specialty.trim(),
-      countriesValid:
-        Array.isArray(countries) &&
-        countries.length > 0 &&
-        countries.every(country => validCountries.includes(country)) &&
-        new Set(countries).size === countries.length,
-      frenchDepartmentsValid: isStringArray(frenchDepartments),
-      frenchCitiesValid: isStringArray(frenchCities),
-      madagascarCitiesValid: isStringArray(madagascarCities),
-      parcelDirectionsValid:
-        Array.isArray(parcelDirections) &&
-        parcelDirections.every(direction =>
-          validParcelDirections.includes(direction)
-        ) &&
-        new Set(parcelDirections).size === parcelDirections.length,
-      deliveryTypeValid:
-        !!delivery && validDeliveryTypes.includes(delivery.type)
-    };
-
-    console.log('ACTIVITY VALIDATION:', checks);
-
-    if (Object.values(checks).some(valid => !valid)) {
-      return res.status(400).json({
-        message: 'Vérifie les informations obligatoires de ton activité.'
-      });
-    }
-
-    if (
-      (frenchDepartments.length > 0 || frenchCities.length > 0) &&
-      !countries.includes('France')
-    ) {
-      return res.status(400).json({
-        message: 'Les départements et villes français nécessitent la sélection de la France.'
-      });
-    }
-
-    if (
-      madagascarCities.length > 0 &&
-      !countries.includes('Madagascar')
-    ) {
-      return res.status(400).json({
-        message: 'Les villes malgaches nécessitent la sélection de Madagascar.'
-      });
-    }
-
-    if (
-      parcelDirections.length > 0 &&
-      !(countries.includes('France') && countries.includes('Madagascar'))
-    ) {
-      return res.status(400).json({
-        message: 'Pour proposer un envoi entre les deux pays, sélectionne la France et Madagascar.'
-      });
-    }
-
-    if (
-      delivery.type === 'free_over_minimum' &&
-      (!Number.isFinite(delivery.minimumAmount) || delivery.minimumAmount < 0)
-    ) {
-      return res.status(400).json({
-        message: 'Indique un montant minimum valide pour la livraison gratuite.'
-      });
-    }
-
-    if (
-      delivery.type === 'flat_fee' &&
-      (!Number.isFinite(delivery.fee) || delivery.fee < 0)
-    ) {
-      return res.status(400).json({
-        message: 'Indique des frais de livraison valides.'
-      });
-    }
-
-    const user = await User.findById(userId);
+    // Vérifier que le compte connecté existe
+    const user = await User.findById(req.user.id);
 
     if (!user) {
       return res.status(404).json({
@@ -126,65 +50,474 @@ router.post('/', async (req, res) => {
       });
     }
 
-    if (!user.profiles.includes('propose')) {
+    // Seuls les comptes utilisateurs ayant le profil propose peuvent créer une activité
+    if (
+      user.role !== 'user' ||
+      !user.profiles.includes('propose')
+    ) {
       return res.status(403).json({
-        message: 'Ce compte ne possède pas le profil « Je propose ».'
+        message: 'Tu dois avoir un profil commerçant pour créer une activité.'
       });
     }
 
-    const normalizedName = name.trim().toLowerCase();
-
-    const existingActivity = await Activity.findOne({ normalizedName });
-
-    if (existingActivity) {
-      return res.status(409).json({
-        message: 'Une activité portant déjà ce nom existe. Choisis un autre nom.'
+    // Vérifier que le nom commercial est enregistré
+    if (!user.merchantName) {
+      return res.status(400).json({
+        message: 'Tu dois d’abord enregistrer ton nom commercial.'
       });
     }
 
+    // Vérifier la spécialité
+    if (
+      typeof specialty !== 'string' ||
+      !specialty.trim()
+    ) {
+      return res.status(400).json({
+        message: 'La spécialité de l’activité est obligatoire.'
+      });
+    }
+
+    // Vérifier les pays
+    if (
+      !Array.isArray(countries) ||
+      countries.length === 0 ||
+      !countries.every(country => validCountries.includes(country)) ||
+      new Set(countries).size !== countries.length
+    ) {
+      return res.status(400).json({
+        message: 'Sélectionne au moins un pays valide.'
+      });
+    }
+
+    // Vérifier les tableaux de zones
+    if (
+      !isStringArray(frenchDepartments) ||
+      !isStringArray(frenchCities) ||
+      !isStringArray(madagascarCities) ||
+      !isStringArray(parcelDirections)
+    ) {
+      return res.status(400).json({
+        message: 'Les zones et directions renseignées sont invalides.'
+      });
+    }
+
+    // Vérifier que les zones correspondent aux pays sélectionnés
+    if (
+      !countries.includes('France') &&
+      (frenchDepartments.length > 0 || frenchCities.length > 0)
+    ) {
+      return res.status(400).json({
+        message: 'Les zones françaises nécessitent la sélection de la France.'
+      });
+    }
+
+    if (
+      !countries.includes('Madagascar') &&
+      madagascarCities.length > 0
+    ) {
+      return res.status(400).json({
+        message: 'Les villes malgaches nécessitent la sélection de Madagascar.'
+      });
+    }
+
+    // Vérifier les directions de colis
+    if (
+      !parcelDirections.every(direction =>
+        validParcelDirections.includes(direction)
+      ) ||
+      new Set(parcelDirections).size !== parcelDirections.length
+    ) {
+      return res.status(400).json({
+        message: 'Une ou plusieurs directions de colis sont invalides.'
+      });
+    }
+
+    const isParcelService =
+      specialty.trim() === 'Envoi de colis France ↔ Madagascar';
+
+    if (isParcelService && parcelDirections.length === 0) {
+      return res.status(400).json({
+        message: 'Sélectionne au moins une direction pour le service de colis.'
+      });
+    }
+
+    if (!isParcelService && parcelDirections.length > 0) {
+      return res.status(400).json({
+        message: 'Les directions de colis sont réservées au service d’envoi de colis.'
+      });
+    }
+
+    // Vérifier les conditions de livraison
+    // Vérifier les configurations de livraison par pays
+    if (!Array.isArray(deliveries) || deliveries.length !== countries.length) {
+      return res.status(400).json({
+        message: 'Une configuration de livraison est nécessaire pour chaque pays sélectionné.'
+      });
+    }
+
+    const configuredCountries = [];
+
+    for (const item of deliveries) {
+      if (
+        !item ||
+        !countries.includes(item.country) ||
+        configuredCountries.includes(item.country)
+      ) {
+        return res.status(400).json({
+          message: 'Les pays des configurations de livraison sont invalides ou en doublon.'
+        });
+      }
+
+      configuredCountries.push(item.country);
+
+      const expectedCurrency =
+        item.country === 'France' ? 'EUR' : 'MGA';
+
+      if (item.currency !== expectedCurrency) {
+        return res.status(400).json({
+          message: `La devise de livraison pour ${item.country} doit être ${expectedCurrency}.`
+        });
+      }
+
+      if (!validDeliveryTypes.includes(item.type)) {
+        return res.status(400).json({
+          message: 'Une condition de livraison est invalide.'
+        });
+      }
+
+      if (
+        item.type === 'free_over_minimum' &&
+        (
+          typeof item.minimumAmount !== 'number' ||
+          !Number.isFinite(item.minimumAmount) ||
+          item.minimumAmount <= 0
+        )
+      ) {
+        return res.status(400).json({
+          message: `Le montant minimum pour ${item.country} doit être supérieur à zéro.`
+        });
+      }
+
+      if (
+        item.type === 'flat_fee' &&
+        (
+          typeof item.fee !== 'number' ||
+          !Number.isFinite(item.fee) ||
+          item.fee < 0
+        )
+      ) {
+        return res.status(400).json({
+          message: `Les frais de livraison pour ${item.country} sont invalides.`
+        });
+      }
+    }
+
+    // Créer l’activité avec le nom commercial du compte connecté
     const activity = await Activity.create({
-      userId,
-      name: name.trim(),
-      normalizedName,
+      userId: user._id,
+      name: user.merchantName,
       specialty: specialty.trim(),
       countries,
-      frenchDepartments: frenchDepartments.map(item => item.trim()),
-      frenchCities: frenchCities.map(item => item.trim()),
-      madagascarCities: madagascarCities.map(item => item.trim()),
-      parcelDirections,
-      delivery: {
-        type: delivery.type,
-        ...(delivery.type === 'free_over_minimum'
-          ? { minimumAmount: delivery.minimumAmount }
-          : {}),
-        ...(delivery.type === 'flat_fee'
-          ? { fee: delivery.fee }
-          : {})
-      }
+      frenchDepartments,
+      frenchCities,
+      madagascarCities,
+      parcelDirections: isParcelService ? parcelDirections : [],
+      deliveries: deliveries.map(item => ({
+        country: item.country,
+        currency: item.currency,
+        type: item.type,
+        minimumAmount:
+          item.type === 'free_over_minimum'
+            ? item.minimumAmount
+            : undefined,
+        fee:
+          item.type === 'flat_fee'
+            ? item.fee
+            : undefined
+      }))
     });
 
     return res.status(201).json({
-      message: 'Activité enregistrée. Elle est en attente de validation.',
+      message: 'Activité créée avec succès. Elle est en attente de validation.',
       activity
     });
 
   } catch (error) {
-    console.error('Erreur enregistrement activité :', error.message);
-
-    if (error.code === 11000) {
-      return res.status(409).json({
-        message: 'Une activité portant déjà ce nom existe. Choisis un autre nom.'
-      });
-    }
-
-    if (error.name === 'ValidationError' || error.name === 'CastError') {
-      return res.status(400).json({
-        message: 'Certaines informations de l’activité sont invalides.'
-      });
-    }
+    console.error('Erreur création activité :', error.message);
 
     return res.status(500).json({
-      message: 'Une erreur est survenue lors de l’enregistrement de l’activité.'
+      message: 'Une erreur est survenue lors de la création de l’activité.'
+    });
+  }
+});
+
+// Récupérer les activités approuvées du marchand connecté
+router.get('/mine', requireAuth, async (req, res) => {
+  try {
+    const activities = await Activity.find({
+      userId: req.user.id
+    }).sort({ createdAt: -1 }).lean();
+
+    return res.status(200).json({ activities });
+
+  } catch (error) {
+    console.error(
+      'Erreur récupération activités du marchand :',
+      error.message
+    );
+
+    return res.status(500).json({
+      message: 'Impossible de récupérer tes activités.'
+    });
+  }
+});
+
+// Modifier une activité appartenant au marchand connecté
+router.patch('/:activityId', requireAuth, async (req, res) => {
+  try {
+    const { activityId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(activityId)) {
+      return res.status(400).json({
+        message: 'Identifiant d’activité invalide.'
+      });
+    }
+
+    const user = await User.findById(req.user.id);
+
+    if (
+      !user ||
+      user.role !== 'user' ||
+      !user.profiles.includes('propose')
+    ) {
+      return res.status(403).json({
+        message: 'Accès réservé aux comptes commerçants.'
+      });
+    }
+
+    // Vérifier que l'activité appartient bien au marchand connecté
+    const activity = await Activity.findOne({
+      _id: activityId,
+      userId: user._id
+    });
+
+    if (!activity) {
+      return res.status(404).json({
+        message: 'Activité introuvable ou accès non autorisé.'
+      });
+    }
+
+    const {
+      specialty,
+      countries,
+      frenchDepartments,
+      frenchCities,
+      madagascarCities,
+      parcelDirections,
+      deliveries
+    } = req.body;
+
+    // Vérifier la spécialité
+    if (
+      typeof specialty !== 'string' ||
+      !specialty.trim()
+    ) {
+      return res.status(400).json({
+        message: 'La spécialité est obligatoire.'
+      });
+    }
+
+    // Vérifier les pays
+    if (
+      !Array.isArray(countries) ||
+      countries.length === 0 ||
+      !countries.every(country => validCountries.includes(country)) ||
+      new Set(countries).size !== countries.length
+    ) {
+      return res.status(400).json({
+        message: 'Sélectionne au moins un pays valide.'
+      });
+    }
+
+    // Vérifier les tableaux
+    if (
+      !isStringArray(frenchDepartments) ||
+      !isStringArray(frenchCities) ||
+      !isStringArray(madagascarCities) ||
+      !isStringArray(parcelDirections)
+    ) {
+      return res.status(400).json({
+        message: 'Les zones et directions renseignées sont invalides.'
+      });
+    }
+
+    // Vérifier la cohérence des zones
+    if (
+      !countries.includes('France') &&
+      (frenchDepartments.length > 0 || frenchCities.length > 0)
+    ) {
+      return res.status(400).json({
+        message: 'Les zones françaises nécessitent la sélection de la France.'
+      });
+    }
+
+    if (
+      !countries.includes('Madagascar') &&
+      madagascarCities.length > 0
+    ) {
+      return res.status(400).json({
+        message: 'Les villes malgaches nécessitent la sélection de Madagascar.'
+      });
+    }
+
+    // Vérifier les directions de colis
+    if (
+      !parcelDirections.every(direction =>
+        validParcelDirections.includes(direction)
+      ) ||
+      new Set(parcelDirections).size !== parcelDirections.length
+    ) {
+      return res.status(400).json({
+        message: 'Une ou plusieurs directions de colis sont invalides.'
+      });
+    }
+
+    const isParcelService =
+      specialty.trim() === 'Envoi de colis France ↔ Madagascar';
+
+    if (isParcelService && parcelDirections.length === 0) {
+      return res.status(400).json({
+        message: 'Sélectionne au moins une direction pour le service de colis.'
+      });
+    }
+
+    if (!isParcelService && parcelDirections.length > 0) {
+      return res.status(400).json({
+        message: 'Les directions de colis sont réservées au service d’envoi de colis.'
+      });
+    }
+
+    // Vérifier les conditions de livraison
+    if (
+      !Array.isArray(deliveries) ||
+      deliveries.length !== countries.length
+    ) {
+      return res.status(400).json({
+        message: 'Une configuration de livraison est nécessaire pour chaque pays sélectionné.'
+      });
+    }
+
+    const configuredCountries = [];
+
+    for (const item of deliveries) {
+      if (
+        !item ||
+        !countries.includes(item.country) ||
+        configuredCountries.includes(item.country)
+      ) {
+        return res.status(400).json({
+          message: 'Les pays des configurations de livraison sont invalides ou en doublon.'
+        });
+      }
+
+      configuredCountries.push(item.country);
+
+      const expectedCurrency =
+        item.country === 'France' ? 'EUR' : 'MGA';
+
+      if (item.currency !== expectedCurrency) {
+        return res.status(400).json({
+          message: `La devise de livraison pour ${item.country} doit être ${expectedCurrency}.`
+        });
+      }
+
+      if (!validDeliveryTypes.includes(item.type)) {
+        return res.status(400).json({
+          message: 'Une condition de livraison est invalide.'
+        });
+      }
+
+      if (
+        item.type === 'free_over_minimum' &&
+        (
+          typeof item.minimumAmount !== 'number' ||
+          !Number.isFinite(item.minimumAmount) ||
+          item.minimumAmount <= 0
+        )
+      ) {
+        return res.status(400).json({
+          message: `Le montant minimum pour ${item.country} doit être supérieur à zéro.`
+        });
+      }
+
+      if (
+        item.type === 'flat_fee' &&
+        (
+          typeof item.fee !== 'number' ||
+          !Number.isFinite(item.fee) ||
+          item.fee < 0
+        )
+      ) {
+        return res.status(400).json({
+          message: `Les frais de livraison pour ${item.country} sont invalides.`
+        });
+      }
+    }
+
+    if (
+      configuredCountries.length !== countries.length ||
+      !countries.every(country => configuredCountries.includes(country))
+    ) {
+      return res.status(400).json({
+        message: 'Chaque pays doit avoir sa configuration de livraison.'
+      });
+    }
+
+    // Mettre à jour uniquement les champs autorisés
+    const wasApproved = activity.status === 'approved';
+
+    activity.specialty = specialty.trim();
+    activity.countries = countries;
+    activity.frenchDepartments = frenchDepartments;
+    activity.frenchCities = frenchCities;
+    activity.madagascarCities = madagascarCities;
+    activity.parcelDirections = isParcelService
+      ? parcelDirections
+      : [];
+
+    activity.deliveries = deliveries.map(item => ({
+      country: item.country,
+      currency: item.currency,
+      type: item.type,
+      minimumAmount:
+        item.type === 'free_over_minimum'
+          ? item.minimumAmount
+          : undefined,
+      fee:
+        item.type === 'flat_fee'
+          ? item.fee
+          : undefined
+    }));
+
+    // Une activité approuvée doit être vérifiée à nouveau
+    if (wasApproved) {
+      activity.status = 'pending';
+    }
+
+    await activity.save();
+
+    return res.status(200).json({
+      message: wasApproved
+        ? 'Activité modifiée. Elle est de nouveau en attente de validation.'
+        : 'Activité modifiée avec succès.',
+      activity
+    });
+
+  } catch (error) {
+    console.error('Erreur modification activité :', error);
+
+    return res.status(500).json({
+      message: 'Une erreur est survenue lors de la modification de l’activité.'
     });
   }
 });

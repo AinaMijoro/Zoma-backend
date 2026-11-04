@@ -12,9 +12,11 @@ async function requireAuth(req, res, next) {
     }
 
     const token = authorization.slice(7);
+    console.log("JWT_SECRET chargé :", !!process.env.JWT_SECRET);
+console.log("Token reçu :", !!token);
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    const user = await User.findById(decoded.userId).select('_id role');
+    const user = await User.findById(decoded.userId).select('_id role profiles merchantName');
 
     if (!user) {
       return res.status(401).json({
@@ -24,15 +26,17 @@ async function requireAuth(req, res, next) {
 
     req.user = {
       id: user._id.toString(),
-      role: user.role
+      role: user.role,
+      profiles: user.profiles,
+      merchantName: user.merchantName
     };
-
     return next();
   } catch (error) {
-    return res.status(401).json({
-      message: 'Jeton invalide ou expiré.'
-    });
-  }
+  console.error("Erreur JWT :", error.message);
+  return res.status(401).json({
+    message: 'Jeton invalide ou expiré.'
+  });
+}
 }
 
 function requireAdmin(req, res, next) {

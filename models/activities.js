@@ -13,13 +13,6 @@ const activitySchema = new mongoose.Schema({
     required: true,
     trim: true
   },
-  normalizedName: {
-    type: String,
-    required: true,
-    trim: true,
-    lowercase: true,
-    unique: true
-  },
 
   specialty: {
     type: String,
@@ -58,7 +51,20 @@ const activitySchema = new mongoose.Schema({
     default: []
   },
 
-  delivery: {
+  deliveries: [
+  {
+    country: {
+      type: String,
+      enum: ['France', 'Madagascar'],
+      required: true
+    },
+
+    currency: {
+      type: String,
+      enum: ['EUR', 'MGA'],
+      required: true
+    },
+
     type: {
       type: String,
       enum: ['free', 'free_over_minimum', 'flat_fee', 'none'],
@@ -74,7 +80,8 @@ const activitySchema = new mongoose.Schema({
       type: Number,
       min: 0
     }
-  },
+  }
+],
 
   status: {
     type: String,

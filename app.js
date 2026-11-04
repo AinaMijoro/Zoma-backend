@@ -26,6 +26,7 @@ app.use("/", indexRouter);
 app.use("/users", usersRouter);
 app.use("/activities", activitiesRouter);
 app.use("/products", require("./routes/products"));
+app.use("/favorites", require("./routes/favorites"));
 app.use("/orders", ordersRouter);
 
 module.exports = app;

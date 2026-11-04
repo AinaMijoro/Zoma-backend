@@ -1,4 +1,3 @@
-
 const express = require("express");
 const mongoose = require("mongoose");
 const router = express.Router();
@@ -60,7 +59,6 @@ router.post("/", async (req, res) => {
             });
         }
 
-
         const createdProducts = await Product.insertMany(
             products.map((product) => ({
                 activityId,
@@ -71,7 +69,6 @@ router.post("/", async (req, res) => {
                 currency: product.currency === "MGA" ? "MGA" : "EUR",
             }))
         );
-
 
         return res.status(201).json({
             message: "Offres enregistrées avec succès.",
@@ -85,19 +82,29 @@ router.post("/", async (req, res) => {
     }
 });
 
-// Récupérer les offres d'une activité
+// Récupérer les offres d'une activité approuvée (accès public)
 router.get("/activity/:activityId", async (req, res) => {
     try {
         const { activityId } = req.params;
 
         if (!mongoose.isValidObjectId(activityId)) {
-            return res.status(400).json({ message: "Identifiant invalide." });
+            return res.status(400).json({
+                message: "Identifiant invalide.",
+            });
         }
 
         const activity = await Activity.findById(activityId);
 
         if (!activity) {
-            return res.status(404).json({ message: "Activité introuvable." });
+            return res.status(404).json({
+                message: "Activité introuvable.",
+            });
+        }
+
+        if (activity.status !== "approved") {
+            return res.status(403).json({
+                message: "Les offres de cette activité ne sont pas encore disponibles.",
+            });
         }
 
         const products = await Product.find({ activityId }).sort({
@@ -107,14 +114,17 @@ router.get("/activity/:activityId", async (req, res) => {
         return res.json({ products });
     } catch (error) {
         console.error("Erreur lors de la récupération des offres :", error);
+
         return res.status(500).json({
             message: "Erreur serveur lors de la récupération des offres.",
         });
     }
 });
+
 // Récupérer toutes les offres d'un prestataire
 router.get("/user/:userId", async (req, res) => {
     try {
+        res.set("Cache-Control", "no-store");
         const { userId } = req.params;
 
         if (!mongoose.isValidObjectId(userId)) {
@@ -139,4 +149,111 @@ router.get("/user/:userId", async (req, res) => {
         });
     }
 });
+
+// MODIFIER UN PRODUIT
+router.patch("/:productId", async (req, res) => {
+    try {
+        const { productId } = req.params;
+        const { userId, name, description, price, currency } = req.body;
+
+        if (
+            !mongoose.isValidObjectId(productId) ||
+            !mongoose.isValidObjectId(userId)
+        ) {
+            return res.status(400).json({
+                message: "Identifiant invalide.",
+            });
+        }
+
+        if (
+            !name?.trim() ||
+            !description?.trim() ||
+            price === "" ||
+            price === null ||
+            price === undefined ||
+            !Number.isFinite(Number(price)) ||
+            Number(price) < 0
+        ) {
+            return res.status(400).json({
+                message: "Nom, description et prix valides obligatoires.",
+            });
+        }
+
+        const product = await Product.findById(productId);
+
+        if (!product) {
+            return res.status(404).json({
+                message: "Produit introuvable.",
+            });
+        }
+
+        if (String(product.userId) !== String(userId)) {
+            return res.status(403).json({
+                message: "Vous ne pouvez pas modifier ce produit.",
+            });
+        }
+
+        product.name = name.trim();
+        product.description = description.trim();
+        product.price = Number(price);
+        product.currency = currency === "MGA" ? "MGA" : "EUR";
+
+        await product.save();
+
+        return res.json({
+            message: "Produit modifié avec succès.",
+            product,
+        });
+    } catch (error) {
+        console.error("Erreur lors de la modification du produit :", error);
+
+        return res.status(500).json({
+            message: "Erreur serveur lors de la modification du produit.",
+        });
+    }
+});
+
+// SUPPRIMER UN PRODUIT
+router.delete("/:productId", async (req, res) => {
+    try {
+        const { productId } = req.params;
+        const { userId } = req.body;
+
+        if (
+            !mongoose.isValidObjectId(productId) ||
+            !mongoose.isValidObjectId(userId)
+        ) {
+            return res.status(400).json({
+                message: "Identifiant invalide.",
+            });
+        }
+
+        const product = await Product.findById(productId);
+
+        if (!product) {
+            return res.status(404).json({
+                message: "Produit introuvable.",
+            });
+        }
+
+        if (String(product.userId) !== String(userId)) {
+            return res.status(403).json({
+                message: "Vous ne pouvez pas supprimer ce produit.",
+            });
+        }
+
+        await Product.findByIdAndDelete(productId);
+
+        return res.json({
+            message: "Produit supprimé avec succès.",
+        });
+    } catch (error) {
+        console.error("Erreur lors de la suppression du produit :", error);
+
+        return res.status(500).json({
+            message: "Erreur serveur lors de la suppression du produit.",
+        });
+    }
+});
+
 module.exports = router;

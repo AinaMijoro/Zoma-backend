@@ -4,7 +4,7 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const User = require('../models/users');
 const jwt = require('jsonwebtoken');
-
+const { requireAuth } = require('../middleware/auth');
 // Inscription d'un nouvel utilisateur
 router.post('/register', async (req, res) => {
   try {
@@ -36,9 +36,15 @@ router.post('/register', async (req, res) => {
       email: email.trim().toLowerCase(),
       password: hashedPassword
     });
+    const token = jwt.sign(
+      { userId: newUser._id },
+      process.env.JWT_SECRET,
+      { expiresIn: '2h' }
+    );
 
     return res.status(201).json({
       message: 'Compte créé avec succès.',
+      token,
       user: {
         id: newUser._id,
         name: newUser.name,
@@ -60,7 +66,7 @@ router.post('/register', async (req, res) => {
   }
 });
 
- // Connexion d'un utilisateur existant
+// Connexion d'un utilisateur existant
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -93,22 +99,24 @@ router.post('/login', async (req, res) => {
     }
 
     const token = jwt.sign(
-  { userId: user._id.toString() },
-  process.env.JWT_SECRET,
-  { expiresIn: '2h' }
-);
+      { userId: user._id.toString() },
+      process.env.JWT_SECRET,
+      { expiresIn: '2h' }
+    );
 
-return res.status(200).json({
-  message: 'Connexion réussie.',
-  token,
-  user: {
-    id: user._id,
-    name: user.name,
-    email: user.email,
-    profiles: user.profiles,
-    role: user.role
-  }
-});
+    return res.status(200).json({
+      message: 'Connexion réussie.',
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        merchantName: user.merchantName,
+        normalizedMerchantName: user.normalizedMerchantName,
+        email: user.email,
+        profiles: user.profiles,
+        role: user.role
+      }
+    });
   } catch (error) {
     console.error('Erreur connexion :', error.message);
 
@@ -118,11 +126,74 @@ return res.status(200).json({
   }
 });
 
+// Enregistrer le nom commercial une seule fois
+router.patch('/merchant-name', requireAuth, async (req, res) => {
+  try {
+    const { merchantName } = req.body;
 
-router.patch('/:userId/profile', async (req, res) => {
+    if (typeof merchantName !== 'string' || !merchantName.trim()) {
+      return res.status(400).json({
+        message: 'Le nom commercial est obligatoire.'
+      });
+    }
+
+    if (req.user.role !== 'user' || !req.user.profiles.includes('propose')) {
+      return res.status(403).json({
+        message: 'Seuls les commerçants peuvent enregistrer un nom commercial.'
+      });
+    }
+
+    if (req.user.merchantName) {
+      return res.status(409).json({
+        message: 'Ton nom commercial est déjà enregistré et ne peut pas être modifié.'
+      });
+    }
+
+    const normalizedMerchantName = merchantName.trim().toLowerCase();
+
+    const existingMerchant = await User.findOne({
+      normalizedMerchantName
+    });
+
+    if (existingMerchant) {
+      return res.status(409).json({
+        message: 'Ce nom commercial est déjà utilisé.'
+      });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      {
+        merchantName: merchantName.trim(),
+        normalizedMerchantName
+      },
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    return res.status(200).json({
+      message: 'Nom commercial enregistré avec succès.',
+      user
+    });
+
+  } catch (error) {
+    if (error.code === 11000) {
+      return res.status(409).json({
+        message: 'Ce nom commercial est déjà utilisé.'
+      });
+    }
+
+    console.error('Erreur nom commercial :', error.message);
+
+    return res.status(500).json({
+      message: 'Une erreur est survenue lors de l’enregistrement du nom commercial.'
+    });
+  }
+});
+router.patch('/:userId/profile', requireAuth, async (req, res) => {
   try {
     const { profiles } = req.body;
 
+    // Vérifier que les profils sont valides
     if (
       !Array.isArray(profiles) ||
       profiles.length === 0 ||
@@ -134,6 +205,14 @@ router.patch('/:userId/profile', async (req, res) => {
       });
     }
 
+    // Vérifier que l'utilisateur modifie son propre compte
+    if (req.user.id !== req.params.userId) {
+      return res.status(403).json({
+        message: 'Tu ne peux modifier que tes propres profils.'
+      });
+    }
+
+    // Enregistrer les profils
     const user = await User.findByIdAndUpdate(
       req.params.userId,
       { profiles },
@@ -150,6 +229,7 @@ router.patch('/:userId/profile', async (req, res) => {
       message: 'Profils enregistrés avec succès.',
       user
     });
+
   } catch (error) {
     console.error('Erreur enregistrement profils :', error.message);
 
@@ -164,5 +244,4 @@ router.patch('/:userId/profile', async (req, res) => {
     });
   }
 });
-
 module.exports = router;

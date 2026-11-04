@@ -52,14 +52,19 @@ const orderSchema = new mongoose.Schema(
       default: {},
     },
     status: {
-      type: String,
-      enum: ["pending", "accepted", "rejected"],
-      default: "pending",
-    },
+  type: String,
+  enum: ["pending", "accepted", "rejected", "completed"],
+  default: "pending",
+},
   },
   {
     timestamps: true,
   }
 );
+// Accélérer les commandes du prospect
+orderSchema.index({ prospectId: 1, createdAt: -1 });
+
+// Accélérer les commandes du vendeur
+orderSchema.index({ sellerId: 1, createdAt: -1 });
 
 module.exports = mongoose.model("Order", orderSchema);

@@ -7,6 +7,15 @@ const userSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
+  merchantName: {
+    type: String,
+    trim: true
+  },
+  normalizedMerchantName: {
+    type: String,
+    trim: true,
+    lowercase: true
+  },
   email: {
     type: String,
     required: true,
@@ -25,7 +34,7 @@ const userSchema = new mongoose.Schema({
     }],
     default: []
   },
-    role: {
+  role: {
     type: String,
     enum: ['user', 'admin'],
     default: 'user'
@@ -33,5 +42,12 @@ const userSchema = new mongoose.Schema({
 }, {
   timestamps: true
 });
-
+userSchema.index(
+  { normalizedMerchantName: 1 },
+  {
+    unique: true,
+    sparse: true,
+    name: 'normalizedMerchantName_unique'
+  }
+);
 module.exports = mongoose.model('User', userSchema);

@@ -119,6 +119,7 @@ router.post("/", requireAuth, async (req, res) => {
             products: orderProducts,
             totalsByCurrency,
         });
+
         try {
             const emailProducts = orderProducts
                 .map(
@@ -175,6 +176,142 @@ L'équipe Zoma`,
 
         return res.status(500).json({
             message: "Erreur serveur lors de la création de la commande.",
+        });
+    }
+});
+
+// Récupérer toutes les commandes du commerçant connecté
+router.get("/mine", requireAuth, async (req, res) => {
+    try {
+        const orders = await Order.find({
+            sellerId: req.user.id,
+        })
+            .populate("prospectId", "name email")
+            .populate("activityId", "name")
+            .sort({ createdAt: -1 });
+
+        return res.status(200).json(orders);
+    } catch (error) {
+        console.error("Erreur lors de la récupération des commandes :", error);
+
+        return res.status(500).json({
+            message: "Erreur serveur lors de la récupération des commandes.",
+        });
+    }
+});
+// Récupérer toutes les commandes du prospect connecté
+router.get("/my-orders", requireAuth, async (req, res) => {
+    try {
+        const orders = await Order.find({
+            prospectId: req.user.id,
+        })
+            .populate("sellerId", "name email")
+            .populate("activityId", "name")
+            .sort({ createdAt: -1 })
+            .lean();
+
+        return res.status(200).json(orders);
+    } catch (error) {
+        console.error(
+            "Erreur lors de la récupération des commandes du prospect :",
+            error
+        );
+
+        return res.status(500).json({
+            message: "Erreur serveur lors de la récupération des commandes.",
+        });
+    }
+});
+// Récupérer le détail d'une commande appartenant au commerçant connecté
+router.get("/:orderId", requireAuth, async (req, res) => {
+    try {
+        const { orderId } = req.params;
+
+        if (!mongoose.isValidObjectId(orderId)) {
+            return res.status(400).json({
+                message: "Identifiant de commande invalide.",
+            });
+        }
+
+        const order = await Order.findOne({
+            _id: orderId,
+            sellerId: req.user.id,
+        })
+            .populate("prospectId", "name email")
+            .populate("activityId", "name");
+
+        if (!order) {
+            return res.status(404).json({
+                message: "Commande introuvable.",
+            });
+        }
+
+        return res.status(200).json(order);
+    } catch (error) {
+        console.error("Erreur lors de la récupération de la commande :", error);
+
+        return res.status(500).json({
+            message: "Erreur serveur lors de la récupération de la commande.",
+        });
+    }
+});
+
+// Modifier le statut d'une commande
+router.patch("/:orderId/status", requireAuth, async (req, res) => {
+    try {
+        const { orderId } = req.params;
+        const { status } = req.body;
+
+        if (!mongoose.isValidObjectId(orderId)) {
+            return res.status(400).json({
+                message: "Identifiant de commande invalide.",
+            });
+        }
+
+        const allowedStatuses = ["accepted", "rejected", "completed"];
+
+        if (!allowedStatuses.includes(status)) {
+            return res.status(400).json({
+                message: "Statut de commande invalide.",
+            });
+        }
+
+        const order = await Order.findOne({
+            _id: orderId,
+            sellerId: req.user.id,
+        });
+
+        if (!order) {
+            return res.status(404).json({
+                message: "Commande introuvable.",
+            });
+        }
+
+        const validTransitions = {
+            pending: ["accepted", "rejected"],
+            accepted: ["completed"],
+            rejected: [],
+            completed: [],
+        };
+
+        if (!validTransitions[order.status].includes(status)) {
+            return res.status(400).json({
+                message: "Cette modification du statut n'est pas autorisée.",
+            });
+        }
+
+        order.status = status;
+        await order.save();
+
+        return res.status(200).json({
+            message: "Statut de la commande mis à jour.",
+            order,
+        });
+    } catch (error) {
+        console.error("Erreur lors de la modification du statut :", error);
+
+        return res.status(500).json({
+            message: "Erreur serveur lors de la modification du statut.",
         });
     }
 });
