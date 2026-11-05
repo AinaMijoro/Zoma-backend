@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-
+const mongoose = require("mongoose");
 /**
  * Module dependencies.
  */
@@ -20,6 +20,51 @@ app.set('port', port);
  */
 
 var server = http.createServer(app);
+
+const { Server } = require("socket.io");
+
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"],
+  },
+});
+
+app.set("io", io);
+
+// Authentification sécurisée des connexions Socket.IO
+const socketAuth = require("../middleware/socketAuth");
+
+io.use(socketAuth);
+
+// Gestion des connexions et des salons de conversation
+const Conversation = require("../models/conversation");
+
+io.on("connection", (socket) => {
+  socket.on("joinConversation", async (conversationId) => {
+    try {
+      if (!mongoose.isValidObjectId(conversationId)) {
+        return;
+      }
+
+      const conversation = await Conversation.findOne({
+        _id: conversationId,
+        $or: [
+          { prospectId: socket.user.id },
+          { merchantId: socket.user.id },
+        ],
+      }).select("_id");
+
+      if (!conversation) {
+        return;
+      }
+
+      socket.join(String(conversation._id));
+    } catch (error) {
+      console.error("Erreur accès salon :", error.message);
+    }
+  });
+});
 
 /**
  * Listen on provided port, on all network interfaces.
