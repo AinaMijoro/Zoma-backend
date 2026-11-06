@@ -1,3 +1,4 @@
+
 const express = require("express");
 const mongoose = require("mongoose");
 const router = express.Router();
@@ -10,6 +11,10 @@ const User = require("../models/users");
 router.post("/", async (req, res) => {
     try {
         const { activityId, userId, products } = req.body;
+        console.log(
+    "PHOTOS REÇUES PAR LE BACKEND :",
+    products?.map((product) => product.images)
+);
 
         if (
             !mongoose.isValidObjectId(activityId) ||
@@ -67,6 +72,12 @@ router.post("/", async (req, res) => {
                 description: product.description.trim(),
                 price: Number(product.price),
                 currency: product.currency === "MGA" ? "MGA" : "EUR",
+                images: Array.isArray(product.images)
+                    ? product.images.filter(
+                        (image) =>
+                            typeof image === "string" && image.trim() !== ""
+                    )
+                    : [],
             }))
         );
 
@@ -154,7 +165,8 @@ router.get("/user/:userId", async (req, res) => {
 router.patch("/:productId", async (req, res) => {
     try {
         const { productId } = req.params;
-        const { userId, name, description, price, currency } = req.body;
+        const { userId, name, description, price, currency, images } = req.body;
+        console.log("PHOTOS REÇUES EN MODIFICATION :", images);
 
         if (
             !mongoose.isValidObjectId(productId) ||
@@ -179,6 +191,19 @@ router.patch("/:productId", async (req, res) => {
             });
         }
 
+        if (
+            images !== undefined &&
+            (!Array.isArray(images) ||
+                images.some(
+                    (image) =>
+                        typeof image !== "string" || image.trim() === ""
+                ))
+        ) {
+            return res.status(400).json({
+                message: "La liste des images est invalide.",
+            });
+        }
+
         const product = await Product.findById(productId);
 
         if (!product) {
@@ -197,6 +222,10 @@ router.patch("/:productId", async (req, res) => {
         product.description = description.trim();
         product.price = Number(price);
         product.currency = currency === "MGA" ? "MGA" : "EUR";
+
+        if (images !== undefined) {
+            product.images = images.map((image) => image.trim());
+        }
 
         await product.save();
 

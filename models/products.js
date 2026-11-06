@@ -23,19 +23,21 @@ const productSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
-    
-price: {
-  type: Number,
-  required: true,
-  min: 0,
-},
-currency: {
-  type: String,
-  enum: ["EUR", "MGA"],
-  default: "EUR",
-  required: true,
-},
-
+    price: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+    currency: {
+      type: String,
+      enum: ["EUR", "MGA"],
+      default: "EUR",
+      required: true,
+    },
+    images: {
+      type: [String],
+      default: [],
+    },
   },
   { timestamps: true }
 );
