@@ -2,34 +2,82 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const router = express.Router();
+
 console.log("ROUTES CONVERSATIONS CHARGÉES");
 
 const Conversation = require("../models/conversation");
 const Message = require("../models/message");
 const User = require("../models/users");
+const Order = require("../models/orders");
 const { requireAuth } = require("../middleware/auth");
 
-// Créer ou retrouver une conversation avec un marchand
+// Créer ou retrouver une conversation
+// Prospect : envoie merchantId
+// Marchand : envoie orderId
 router.post("/", requireAuth, async (req, res) => {
   try {
-    const { merchantId } = req.body;
-    const prospectId = req.user.id;
+    const userId = String(req.user.id);
+    const profiles = req.user.profiles || [];
 
-    if (!req.user.profiles.includes("cherche")) {
+    let prospectId;
+    let merchantId;
+
+    // Cas 1 : le prospect contacte un marchand
+    if (profiles.includes("cherche")) {
+      merchantId = req.body.merchantId;
+      prospectId = userId;
+
+      if (!mongoose.isValidObjectId(merchantId)) {
+        return res.status(400).json({
+          message: "Identifiant du marchand invalide.",
+        });
+      }
+
+      if (String(merchantId) === userId) {
+        return res.status(403).json({
+          message: "Vous ne pouvez pas vous contacter vous-même.",
+        });
+      }
+    }
+
+    // Cas 2 : le marchand contacte le prospect à partir d'une commande
+    else if (profiles.includes("propose")) {
+      const { orderId } = req.body;
+
+      if (!mongoose.isValidObjectId(orderId)) {
+        return res.status(400).json({
+          message: "Identifiant de commande invalide.",
+        });
+      }
+
+      const order = await Order.findOne({
+        _id: orderId,
+        sellerId: userId,
+      });
+
+      if (!order) {
+        return res.status(404).json({
+          message: "Commande introuvable ou non autorisée.",
+        });
+      }
+
+      prospectId = String(order.prospectId);
+      merchantId = userId;
+    } else {
       return res.status(403).json({
-        message: "Seuls les prospects peuvent contacter un marchand.",
+        message: "Profil non autorisé à démarrer une conversation.",
       });
     }
 
-    if (!mongoose.isValidObjectId(merchantId)) {
-      return res.status(400).json({
-        message: "Identifiant du marchand invalide.",
-      });
-    }
+    // Vérifier les deux participants
+    const prospect = await User.findOne({
+      _id: prospectId,
+      profiles: "cherche",
+    }).select("_id name");
 
-    if (String(merchantId) === prospectId) {
-      return res.status(403).json({
-        message: "Vous ne pouvez pas vous contacter vous-même.",
+    if (!prospect) {
+      return res.status(404).json({
+        message: "Prospect introuvable.",
       });
     }
 
@@ -44,12 +92,17 @@ router.post("/", requireAuth, async (req, res) => {
       });
     }
 
+    // Retrouver la conversation existante ou la créer
     const conversation = await Conversation.findOneAndUpdate(
       { prospectId, merchantId },
       {
         $setOnInsert: { prospectId, merchantId },
       },
-      { new: true, upsert: true, setDefaultsOnInsert: true }
+      {
+        new: true,
+        upsert: true,
+        setDefaultsOnInsert: true,
+      }
     );
 
     return res.status(200).json(conversation);
@@ -139,9 +192,10 @@ router.get("/:conversationId/messages", requireAuth, async (req, res) => {
 router.post("/:conversationId/messages", requireAuth, async (req, res) => {
   try {
     const { conversationId } = req.params;
-    const content = typeof req.body.content === "string"
-      ? req.body.content.trim()
-      : "";
+    const content =
+      typeof req.body.content === "string"
+        ? req.body.content.trim()
+        : "";
 
     if (!mongoose.isValidObjectId(conversationId)) {
       return res.status(400).json({
