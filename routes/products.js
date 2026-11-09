@@ -1,3 +1,4 @@
+
 const express = require("express");
 const mongoose = require("mongoose");
 const router = express.Router();
@@ -6,7 +7,7 @@ const Product = require("../models/products");
 const Activity = require("../models/activities");
 const User = require("../models/users");
 
-// Enregistrer plusieurs offres pour une activité
+// ENREGISTRER PLUSIEURS OFFRES POUR UNE ACTIVITÉ
 router.post("/", async (req, res) => {
   try {
     const { activityId, userId, products } = req.body;
@@ -96,7 +97,7 @@ router.post("/", async (req, res) => {
   }
 });
 
-// Récupérer les offres d'une activité approuvée (accès public)
+// RÉCUPÉRER LES OFFRES D'UNE ACTIVITÉ APPROUVÉE
 router.get("/activity/:activityId", async (req, res) => {
   try {
     const { activityId } = req.params;
@@ -108,6 +109,7 @@ router.get("/activity/:activityId", async (req, res) => {
     }
 
     const activity = await Activity.findById(activityId);
+
     console.log("ACTIVITÉ TROUVÉE EN BASE :", {
       id: String(activity?._id),
       name: activity?.name,
@@ -126,7 +128,6 @@ router.get("/activity/:activityId", async (req, res) => {
       });
     }
 
-    // Récupérer également le nom et la spécialité de l'activité
     const products = await Product.find({ activityId })
       .populate("activityId", "name specialty")
       .sort({ createdAt: -1 });
@@ -146,7 +147,71 @@ router.get("/activity/:activityId", async (req, res) => {
   }
 });
 
-// Récupérer toutes les offres d'un prestataire
+// RECHERCHE GLOBALE DANS LES PRODUITS
+// Exemple : GET /products/search?query=bonbon
+router.get("/search", async (req, res) => {
+  try {
+    const query = String(req.query.query || "").trim();
+
+    if (query.length < 2) {
+      return res.status(400).json({
+        message: "Saisissez au moins deux caractères pour rechercher.",
+      });
+    }
+
+    // Échapper les caractères spéciaux pour sécuriser la recherche.
+    const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const searchRegex = new RegExp(escapedQuery, "i");
+
+    // Rechercher uniquement les activités approuvées.
+    const approvedActivities = await Activity.find({
+      status: "approved",
+    }).select("_id");
+
+    const approvedActivityIds = approvedActivities.map(
+      (activity) => activity._id,
+    );
+
+    const products = await Product.find({
+      activityId: { $in: approvedActivityIds },
+      $or: [
+        { name: searchRegex },
+        { description: searchRegex },
+      ],
+    })
+      .populate("activityId", "name specialty")
+      .populate("userId", "name merchantName")
+      .sort({ createdAt: -1 })
+      .limit(50);
+
+    const results = products.map((product) => {
+      const item = product.toObject();
+
+      return {
+        ...item,
+        specialty: item.activityId?.specialty || "",
+        merchantName:
+          item.userId?.merchantName?.trim() ||
+          item.userId?.name ||
+          "Prestataire",
+      };
+    });
+
+    return res.json({
+      query,
+      count: results.length,
+      products: results,
+    });
+  } catch (error) {
+    console.error("Erreur lors de la recherche des produits :", error);
+
+    return res.status(500).json({
+      message: "Erreur serveur lors de la recherche des produits.",
+    });
+  }
+});
+
+// RÉCUPÉRER TOUTES LES OFFRES D'UN PRESTATAIRE
 router.get("/user/:userId", async (req, res) => {
   try {
     res.set("Cache-Control", "no-store");

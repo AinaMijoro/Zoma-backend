@@ -27,6 +27,17 @@ const userSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+
+  // Réinitialisation du mot de passe
+  resetPasswordTokenHash: {
+    type: String,
+    default: undefined
+  },
+  resetPasswordExpires: {
+    type: Date,
+    default: undefined
+  },
+
   profiles: {
     type: [{
       type: String,
@@ -42,6 +53,7 @@ const userSchema = new mongoose.Schema({
 }, {
   timestamps: true
 });
+
 userSchema.index(
   { normalizedMerchantName: 1 },
   {
@@ -50,4 +62,5 @@ userSchema.index(
     name: 'normalizedMerchantName_unique'
   }
 );
+
 module.exports = mongoose.model('User', userSchema);
