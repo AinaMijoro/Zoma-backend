@@ -147,7 +147,7 @@ router.get("/activity/:activityId", async (req, res) => {
   }
 });
 
-// RECHERCHE GLOBALE DANS LES PRODUITS
+// RECHERCHE GLOBALE DANS LES PRODUITS ET LES PRESTATAIRES
 // Exemple : GET /products/search?query=bonbon
 router.get("/search", async (req, res) => {
   try {
@@ -159,11 +159,11 @@ router.get("/search", async (req, res) => {
       });
     }
 
-    // Échapper les caractères spéciaux pour sécuriser la recherche.
+    // Échapper les caractères spéciaux.
     const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const searchRegex = new RegExp(escapedQuery, "i");
 
-    // Rechercher uniquement les activités approuvées.
+    // Récupérer les activités approuvées.
     const approvedActivities = await Activity.find({
       status: "approved",
     }).select("_id");
@@ -172,14 +172,26 @@ router.get("/search", async (req, res) => {
       (activity) => activity._id,
     );
 
+    // Rechercher les prestataires par nom commercial ou personnel.
+    const matchingUsers = await User.find({
+      $or: [
+        { merchantName: searchRegex },
+        { name: searchRegex },
+      ],
+    }).select("_id");
+
+    const matchingUserIds = matchingUsers.map((user) => user._id);
+
+    // Rechercher les produits et les prestataires correspondants.
     const products = await Product.find({
       activityId: { $in: approvedActivityIds },
       $or: [
         { name: searchRegex },
         { description: searchRegex },
+        { userId: { $in: matchingUserIds } },
       ],
     })
-      .populate("activityId", "name specialty")
+      .populate("activityId", "name specialty userId")
       .populate("userId", "name merchantName")
       .sort({ createdAt: -1 })
       .limit(50);
@@ -210,7 +222,6 @@ router.get("/search", async (req, res) => {
     });
   }
 });
-
 // RÉCUPÉRER TOUTES LES OFFRES D'UN PRESTATAIRE
 router.get("/user/:userId", async (req, res) => {
   try {

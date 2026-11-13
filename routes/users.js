@@ -37,15 +37,12 @@ router.post('/register', async (req, res) => {
       password: hashedPassword
     });
 
-    const token = jwt.sign(
-      { userId: newUser._id },
-      process.env.JWT_SECRET,
-      { expiresIn: '2h' }
-    );
+    const session = await createSession(newUser);
 
     return res.status(201).json({
       message: 'Compte créé avec succès.',
-      token,
+      token: session.token,
+      refreshToken: session.refreshToken,
       user: {
         id: newUser._id,
         name: newUser.name,
@@ -99,15 +96,12 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    const token = jwt.sign(
-      { userId: user._id.toString() },
-      process.env.JWT_SECRET,
-      { expiresIn: '2h' }
-    );
+    const session = await createSession(user);
 
     return res.status(200).json({
       message: 'Connexion réussie.',
-      token,
+      token: session.token,
+      refreshToken: session.refreshToken,
       user: {
         id: user._id,
         name: user.name,
@@ -123,6 +117,129 @@ router.post('/login', async (req, res) => {
 
     return res.status(500).json({
       message: 'Une erreur est survenue lors de la connexion.'
+    });
+  }
+});
+
+// Renouveler une session
+router.post('/refresh', async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (
+      typeof refreshToken !== 'string' ||
+      !refreshToken
+    ) {
+      return res.status(400).json({
+        message: 'Refresh token manquant.'
+      });
+    }
+
+    const oldTokenHash = hashRefreshToken(refreshToken);
+
+    const user = await User.findOne({
+      'refreshTokens.tokenHash': oldTokenHash
+    });
+
+    if (!user) {
+      return res.status(401).json({
+        message: 'Session invalide ou expirée.'
+      });
+    }
+
+    const session = user.refreshTokens.find(
+      item => item.tokenHash === oldTokenHash
+    );
+
+    if (!session || session.expiresAt <= new Date()) {
+      return res.status(401).json({
+        message: 'Session invalide ou expirée.'
+      });
+    }
+
+    const newRefreshToken = generateRefreshToken();
+    const newTokenHash = hashRefreshToken(newRefreshToken);
+    const newExpiry = getRefreshTokenExpiry();
+
+    // Rotation atomique : un ancien token ne peut être utilisé
+    // qu'une seule fois.
+    const updateResult = await User.updateOne(
+      {
+        _id: user._id,
+        refreshTokens: {
+          $elemMatch: {
+            sessionId: session.sessionId,
+            tokenHash: oldTokenHash,
+            expiresAt: { $gt: new Date() }
+          }
+        }
+      },
+      {
+        $set: {
+          'refreshTokens.$.tokenHash': newTokenHash,
+          'refreshTokens.$.expiresAt': newExpiry
+        }
+      }
+    );
+
+    if (updateResult.modifiedCount !== 1) {
+      return res.status(401).json({
+        message: 'Session invalide ou déjà renouvelée.'
+      });
+    }
+
+    const newAccessToken = generateAccessToken(user._id);
+
+    return res.status(200).json({
+      token: newAccessToken,
+      refreshToken: newRefreshToken
+    });
+
+  } catch (error) {
+    console.error('Erreur renouvellement session :', error.message);
+
+    return res.status(500).json({
+      message: 'Impossible de renouveler la session.'
+    });
+  }
+});
+
+// Déconnexion et révocation de la session actuelle
+router.post('/logout', async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (
+      typeof refreshToken !== 'string' ||
+      !refreshToken
+    ) {
+      return res.status(400).json({
+        message: 'Refresh token manquant.'
+      });
+    }
+
+    const tokenHash = hashRefreshToken(refreshToken);
+
+    await User.updateOne(
+      { 'refreshTokens.tokenHash': tokenHash },
+      {
+        $pull: {
+          refreshTokens: {
+            tokenHash
+          }
+        }
+      }
+    );
+
+    return res.status(200).json({
+      message: 'Déconnexion réussie.'
+    });
+
+  } catch (error) {
+    console.error('Erreur déconnexion :', error.message);
+
+    return res.status(500).json({
+      message: 'Impossible de terminer la déconnexion.'
     });
   }
 });
@@ -227,191 +344,194 @@ router.post('/forgot-password', async (req, res) => {
 
 // Réinitialiser le mot de passe avec le jeton reçu par email
 
-    // Réinitialiser le mot de passe avec le jeton reçu par email
-    router.post('/reset-password', async (req, res) => {
-      try {
-        const { token, newPassword } = req.body;
+// Réinitialiser le mot de passe avec le jeton reçu par email
+router.post('/reset-password', async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
 
-        if (
-          typeof token !== 'string' ||
-          !token ||
-          typeof newPassword !== 'string' ||
-          !newPassword
-        ) {
-          return res.status(400).json({
-            message: 'Le jeton et le nouveau mot de passe sont obligatoires.'
-          });
-        }
+    if (
+      typeof token !== 'string' ||
+      !token ||
+      typeof newPassword !== 'string' ||
+      !newPassword
+    ) {
+      return res.status(400).json({
+        message: 'Le jeton et le nouveau mot de passe sont obligatoires.'
+      });
+    }
 
-        if (newPassword.length < 8) {
-          return res.status(400).json({
-            message: 'Le mot de passe doit contenir au moins 8 caractères.'
-          });
-        }
+    if (newPassword.length < 8) {
+      return res.status(400).json({
+        message: 'Le mot de passe doit contenir au moins 8 caractères.'
+      });
+    }
 
-        const resetTokenHash = crypto
-          .createHash('sha256')
-          .update(token)
-          .digest('hex');
+    const resetTokenHash = crypto
+      .createHash('sha256')
+      .update(token)
+      .digest('hex');
 
-        const user = await User.findOne({
-          resetPasswordTokenHash: resetTokenHash,
-          resetPasswordExpires: { $gt: new Date() }
-        });
-
-        if (!user) {
-          return res.status(400).json({
-            message: 'Ce lien est invalide ou a expiré. Veuillez refaire une demande.'
-          });
-        }
-
-        user.password = await bcrypt.hash(newPassword, 12);
-        user.resetPasswordTokenHash = undefined;
-        user.resetPasswordExpires = undefined;
-
-        await user.save();
-
-        return res.status(200).json({
-          message: 'Votre mot de passe a été réinitialisé avec succès.'
-        });
-
-      } catch (error) {
-        console.error(
-          'Erreur réinitialisation mot de passe :',
-          error.message
-        );
-
-        return res.status(500).json({
-          message: 'Une erreur est survenue lors de la réinitialisation.'
-        });
-      }
+    const user = await User.findOne({
+      resetPasswordTokenHash: resetTokenHash,
+      resetPasswordExpires: { $gt: new Date() }
     });
 
-    // Enregistrer le nom commercial une seule fois
-    router.patch('/merchant-name', requireAuth, async (req, res) => {
-      try {
-        const { merchantName } = req.body;
+    if (!user) {
+      return res.status(400).json({
+        message: 'Ce lien est invalide ou a expiré. Veuillez refaire une demande.'
+      });
+    }
 
-        if (typeof merchantName !== 'string' || !merchantName.trim()) {
-          return res.status(400).json({
-            message: 'Le nom commercial est obligatoire.'
-          });
-        }
+    user.password = await bcrypt.hash(newPassword, 12);
+    user.resetPasswordTokenHash = undefined;
+    user.resetPasswordExpires = undefined;
 
-        if (
-          req.user.role !== 'user' ||
-          !req.user.profiles.includes('propose')
-        ) {
-          return res.status(403).json({
-            message: 'Seuls les commerçants peuvent enregistrer un nom commercial.'
-          });
-        }
+    // Révoquer toutes les sessions après un changement de mot de passe
+    user.refreshTokens = [];
 
-        if (req.user.merchantName) {
-          return res.status(409).json({
-            message: 'Ton nom commercial est déjà enregistré et ne peut pas être modifié.'
-          });
-        }
+    await user.save();
 
-        const normalizedMerchantName =
-          merchantName.trim().toLowerCase();
-
-        const existingMerchant = await User.findOne({
-          normalizedMerchantName
-        });
-
-        if (existingMerchant) {
-          return res.status(409).json({
-            message: 'Ce nom commercial est déjà utilisé.'
-          });
-        }
-
-        const user = await User.findByIdAndUpdate(
-          req.user.id,
-          {
-            merchantName: merchantName.trim(),
-            normalizedMerchantName
-          },
-          { new: true, runValidators: true }
-        ).select('-password');
-
-        return res.status(200).json({
-          message: 'Nom commercial enregistré avec succès.',
-          user
-        });
-
-      } catch (error) {
-        if (error.code === 11000) {
-          return res.status(409).json({
-            message: 'Ce nom commercial est déjà utilisé.'
-          });
-        }
-
-        console.error('Erreur nom commercial :', error.message);
-
-        return res.status(500).json({
-          message: 'Une erreur est survenue lors de l’enregistrement du nom commercial.'
-        });
-      }
+    return res.status(200).json({
+      message: 'Votre mot de passe a été réinitialisé avec succès.'
     });
 
-    // Modifier les profils de l'utilisateur
-    router.patch('/:userId/profile', requireAuth, async (req, res) => {
-      try {
-        const { profiles } = req.body;
+  } catch (error) {
+    console.error(
+      'Erreur réinitialisation mot de passe :',
+      error.message
+    );
 
-        if (
-          !Array.isArray(profiles) ||
-          profiles.length === 0 ||
-          !profiles.every(profile =>
-            ['cherche', 'propose'].includes(profile)
-          ) ||
-          new Set(profiles).size !== profiles.length
-        ) {
-          return res.status(400).json({
-            message: 'Choisis au moins un profil valide : "cherche" ou "propose".'
-          });
-        }
+    return res.status(500).json({
+      message: 'Une erreur est survenue lors de la réinitialisation.'
+    });
+  }
+});
 
-        if (req.user.id !== req.params.userId) {
-          return res.status(403).json({
-            message: 'Tu ne peux modifier que tes propres profils.'
-          });
-        }
+// Enregistrer le nom commercial une seule fois
+router.patch('/merchant-name', requireAuth, async (req, res) => {
+  try {
+    const { merchantName } = req.body;
 
-        const user = await User.findByIdAndUpdate(
-          req.params.userId,
-          { profiles },
-          { new: true, runValidators: true }
-        ).select('-password');
+    if (typeof merchantName !== 'string' || !merchantName.trim()) {
+      return res.status(400).json({
+        message: 'Le nom commercial est obligatoire.'
+      });
+    }
 
-        if (!user) {
-          return res.status(404).json({
-            message: 'Utilisateur introuvable.'
-          });
-        }
+    if (
+      req.user.role !== 'user' ||
+      !req.user.profiles.includes('propose')
+    ) {
+      return res.status(403).json({
+        message: 'Seuls les commerçants peuvent enregistrer un nom commercial.'
+      });
+    }
 
-        return res.status(200).json({
-          message: 'Profils enregistrés avec succès.',
-          user
-        });
+    if (req.user.merchantName) {
+      return res.status(409).json({
+        message: 'Ton nom commercial est déjà enregistré et ne peut pas être modifié.'
+      });
+    }
 
-      } catch (error) {
-        console.error(
-          'Erreur enregistrement profils :',
-          error.message
-        );
+    const normalizedMerchantName =
+      merchantName.trim().toLowerCase();
 
-        if (error.name === 'CastError') {
-          return res.status(400).json({
-            message: 'Identifiant utilisateur invalide.'
-          });
-        }
-
-        return res.status(500).json({
-          message: 'Une erreur est survenue lors de l’enregistrement des profils.'
-        });
-      }
+    const existingMerchant = await User.findOne({
+      normalizedMerchantName
     });
 
-    module.exports = router;
+    if (existingMerchant) {
+      return res.status(409).json({
+        message: 'Ce nom commercial est déjà utilisé.'
+      });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      {
+        merchantName: merchantName.trim(),
+        normalizedMerchantName
+      },
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    return res.status(200).json({
+      message: 'Nom commercial enregistré avec succès.',
+      user
+    });
+
+  } catch (error) {
+    if (error.code === 11000) {
+      return res.status(409).json({
+        message: 'Ce nom commercial est déjà utilisé.'
+      });
+    }
+
+    console.error('Erreur nom commercial :', error.message);
+
+    return res.status(500).json({
+      message: 'Une erreur est survenue lors de l’enregistrement du nom commercial.'
+    });
+  }
+});
+
+// Modifier les profils de l'utilisateur
+router.patch('/:userId/profile', requireAuth, async (req, res) => {
+  try {
+    const { profiles } = req.body;
+
+    if (
+      !Array.isArray(profiles) ||
+      profiles.length === 0 ||
+      !profiles.every(profile =>
+        ['cherche', 'propose'].includes(profile)
+      ) ||
+      new Set(profiles).size !== profiles.length
+    ) {
+      return res.status(400).json({
+        message: 'Choisis au moins un profil valide : "cherche" ou "propose".'
+      });
+    }
+
+    if (req.user.id !== req.params.userId) {
+      return res.status(403).json({
+        message: 'Tu ne peux modifier que tes propres profils.'
+      });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.params.userId,
+      { profiles },
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!user) {
+      return res.status(404).json({
+        message: 'Utilisateur introuvable.'
+      });
+    }
+
+    return res.status(200).json({
+      message: 'Profils enregistrés avec succès.',
+      user
+    });
+
+  } catch (error) {
+    console.error(
+      'Erreur enregistrement profils :',
+      error.message
+    );
+
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        message: 'Identifiant utilisateur invalide.'
+      });
+    }
+
+    return res.status(500).json({
+      message: 'Une erreur est survenue lors de l’enregistrement des profils.'
+    });
+  }
+});
+
+module.exports = router;

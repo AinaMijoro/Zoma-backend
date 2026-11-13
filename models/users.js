@@ -38,6 +38,25 @@ const userSchema = new mongoose.Schema({
     default: undefined
   },
 
+  // Sessions persistantes
+  refreshTokens: {
+    type: [{
+      tokenHash: {
+        type: String,
+        required: true
+      },
+      sessionId: {
+        type: String,
+        required: true
+      },
+      expiresAt: {
+        type: Date,
+        required: true
+      }
+    }],
+    default: []
+  },
+
   profiles: {
     type: [{
       type: String,
