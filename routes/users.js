@@ -15,7 +15,7 @@ const generateAccessToken = (userId) => {
   }
 
   return jwt.sign(
-    { id: userId },
+    { userId: userId },
     process.env.JWT_SECRET,
     { expiresIn: '15m' }
   );
@@ -43,6 +43,7 @@ const getRefreshTokenExpiry = () => {
 const createSession = async (user) => {
   const token = generateAccessToken(user._id);
   const refreshToken = generateRefreshToken();
+
   const sessionId = crypto.randomUUID();
 
   user.refreshTokens.push({
@@ -212,8 +213,7 @@ router.post('/refresh', async (req, res) => {
     const newTokenHash = hashRefreshToken(newRefreshToken);
     const newExpiry = getRefreshTokenExpiry();
 
-    // Rotation atomique : un ancien token ne peut être utilisé
-    // qu'une seule fois.
+    // Rotation atomique du refresh token
     const updateResult = await User.updateOne(
       {
         _id: user._id,
@@ -328,10 +328,8 @@ router.post('/forgot-password', async (req, res) => {
       });
     }
 
-    // Génération d'un jeton sécurisé
     const resetToken = crypto.randomBytes(32).toString('hex');
 
-    // Seul le hash du jeton est enregistré en base
     const resetTokenHash = crypto
       .createHash('sha256')
       .update(resetToken)
@@ -344,7 +342,6 @@ router.post('/forgot-password', async (req, res) => {
 
     await user.save();
 
-    // Création du lien de réinitialisation
     const separator = process.env.PASSWORD_RESET_URL.includes('?')
       ? '&'
       : '?';
@@ -352,8 +349,6 @@ router.post('/forgot-password', async (req, res) => {
     const resetLink =
       `${process.env.PASSWORD_RESET_URL}${separator}token=${resetToken}`;
 
-
-    // Envoi de l'email avec Resend
     try {
       const emailResponse = await sendPasswordResetEmail({
         to: user.email,
@@ -376,7 +371,6 @@ router.post('/forgot-password', async (req, res) => {
       });
     }
 
-
     return res.status(200).json({
       message: genericMessage
     });
@@ -393,9 +387,7 @@ router.post('/forgot-password', async (req, res) => {
   }
 });
 
-// Réinitialiser le mot de passe avec le jeton reçu par email
-
-// Réinitialiser le mot de passe avec le jeton reçu par email
+// Réinitialiser le mot de passe
 router.post('/reset-password', async (req, res) => {
   try {
     const { token, newPassword } = req.body;
@@ -436,8 +428,6 @@ router.post('/reset-password', async (req, res) => {
     user.password = await bcrypt.hash(newPassword, 12);
     user.resetPasswordTokenHash = undefined;
     user.resetPasswordExpires = undefined;
-
-    // Révoquer toutes les sessions après un changement de mot de passe
     user.refreshTokens = [];
 
     await user.save();
