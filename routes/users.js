@@ -8,6 +8,57 @@ const crypto = require('crypto');
 const { requireAuth } = require('../middleware/auth');
 const { sendPasswordResetEmail } = require('../mailer');
 
+// Générer un access token JWT
+const generateAccessToken = (userId) => {
+  if (!process.env.JWT_SECRET) {
+    throw new Error('JWT_SECRET est absent des variables Render');
+  }
+
+  return jwt.sign(
+    { id: userId },
+    process.env.JWT_SECRET,
+    { expiresIn: '15m' }
+  );
+};
+
+// Générer un refresh token sécurisé
+const generateRefreshToken = () => {
+  return crypto.randomBytes(64).toString('hex');
+};
+
+// Hasher le refresh token
+const hashRefreshToken = (token) => {
+  return crypto
+    .createHash('sha256')
+    .update(token)
+    .digest('hex');
+};
+
+// Durée de validité du refresh token
+const getRefreshTokenExpiry = () => {
+  return new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+};
+
+// Créer une nouvelle session
+const createSession = async (user) => {
+  const token = generateAccessToken(user._id);
+  const refreshToken = generateRefreshToken();
+  const sessionId = crypto.randomUUID();
+
+  user.refreshTokens.push({
+    sessionId,
+    tokenHash: hashRefreshToken(refreshToken),
+    expiresAt: getRefreshTokenExpiry()
+  });
+
+  await user.save();
+
+  return {
+    token,
+    refreshToken
+  };
+};
+
 // Inscription d'un nouvel utilisateur
 router.post('/register', async (req, res) => {
   try {
