@@ -42,6 +42,7 @@ io.use(socketAuth);
 const Conversation = require("../models/conversation");
 
 io.on("connection", (socket) => {
+    socket.join(`user:${socket.user.id}`);
   socket.on("joinConversation", async (conversationId) => {
     try {
       if (!mongoose.isValidObjectId(conversationId)) {

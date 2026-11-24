@@ -42,7 +42,7 @@ router.post("/", requireAuth, async (req, res) => {
 
         const seller = await User.findById(activity.userId);
 
-       if (!seller || !seller.profiles.includes("propose")) {
+        if (!seller || !seller.profiles.includes("propose")) {
             return res.status(404).json({
                 message: "Prestataire introuvable ou profil marchand indisponible.",
             });
@@ -120,7 +120,20 @@ router.post("/", requireAuth, async (req, res) => {
             totalsByCurrency,
         });
 
+        // Notification du commerçant : nouvelle commande
+        const io = req.app.get("io");
 
+        if (io) {
+            io.to(`user:${String(activity.userId)}`).emit("newOrder", {
+                orderId: String(order._id),
+                status: order.status,
+                activityName: activity.name,
+                prospectName: prospect.name,
+                products: order.products,
+                totalsByCurrency: Object.fromEntries(order.totalsByCurrency),
+                createdAt: order.createdAt,
+            });
+        }
 
         return res.status(201).json({
             message: "Commande enregistrée avec succès.",
@@ -163,6 +176,7 @@ router.get("/mine", requireAuth, async (req, res) => {
         });
     }
 });
+
 // Récupérer toutes les commandes du prospect connecté
 router.get("/my-orders", requireAuth, async (req, res) => {
     try {
@@ -186,6 +200,7 @@ router.get("/my-orders", requireAuth, async (req, res) => {
         });
     }
 });
+
 // Récupérer le détail d'une commande appartenant au commerçant connecté
 router.get("/:orderId", requireAuth, async (req, res) => {
     try {
@@ -266,6 +281,16 @@ router.patch("/:orderId/status", requireAuth, async (req, res) => {
 
         order.status = status;
         await order.save();
+
+        // Notification du prospect : changement de statut
+        const io = req.app.get("io");
+
+        if (io) {
+            io.to(`user:${String(order.prospectId)}`).emit("orderStatusUpdated", {
+                orderId: String(order._id),
+                status: order.status,
+            });
+        }
 
         return res.status(200).json({
             message: "Statut de la commande mis à jour.",

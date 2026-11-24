@@ -244,7 +244,26 @@ router.post("/:conversationId/messages", requireAuth, async (req, res) => {
     const io = req.app.get("io");
 
     if (io) {
+      // Événement existant : réception du message dans la discussion
       io.to(String(conversationId)).emit("newMessage", message);
+
+      // Déterminer le destinataire du message
+      const recipientId =
+        String(conversation.prospectId) === String(req.user.id)
+          ? conversation.merchantId
+          : conversation.prospectId;
+
+      // Nouvel événement : notification personnelle du destinataire
+      io.to(`user:${String(recipientId)}`).emit(
+        "newMessageNotification",
+        {
+          conversationId: String(conversationId),
+          messageId: String(message._id),
+          senderId: String(req.user.id),
+          content: message.content,
+          createdAt: message.createdAt,
+        }
+      );
     }
 
     return res.status(201).json(message);
